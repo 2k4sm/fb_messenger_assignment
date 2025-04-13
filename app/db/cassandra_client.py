@@ -7,6 +7,7 @@ import uuid
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
+import time
 
 from cassandra.cluster import Cluster, Session
 from cassandra.auth import PlainTextAuthProvider
@@ -33,17 +34,35 @@ class CassandraClient:
         self.host = os.getenv("CASSANDRA_HOST", "localhost")
         self.port = int(os.getenv("CASSANDRA_PORT", "9042"))
         self.keyspace = os.getenv("CASSANDRA_KEYSPACE", "messenger")
-        
+        self.max_retries = int(os.getenv("CASSANDRA_MAX_RETRIES", "30"))
+        self.retry_delay = int(os.getenv("CASSANDRA_RETRY_DELAY", "5"))
+
         self.cluster = None
         self.session = None
-        self.connect()
-        
+
+        # Initialize but don't immediately fail if connection fails
+        # Connection will be established lazily when needed
         self._initialized = True
-    
+
+    def connect_with_retry(self) -> None:
+        """Connect to Cassandra with retry mechanism."""
+        retries = 0
+        while True:  # Keep trying indefinitely until connection is established
+            try:
+                self.connect()
+                logger.info("Successfully connected to Cassandra after retries")
+                return
+            except Exception as e:
+                retries += 1
+                logger.warning(f"Failed to connect to Cassandra (attempt {retries}): {str(e)}")
+                logger.info(f"Retrying in {self.retry_delay} seconds...")
+                time.sleep(self.retry_delay)
+
     def connect(self) -> None:
         """Connect to the Cassandra cluster."""
         try:
-            self.cluster = Cluster([self.host])
+            logger.info(f"Connecting to Cassandra at {self.host}:{self.port}...")
+            self.cluster = Cluster([self.host], port=self.port)
             self.session = self.cluster.connect(self.keyspace)
             self.session.row_factory = dict_factory
             logger.info(f"Connected to Cassandra at {self.host}:{self.port}, keyspace: {self.keyspace}")
@@ -69,8 +88,10 @@ class CassandraClient:
             List of rows as dictionaries
         """
         if not self.session:
-            self.connect()
-        
+            self.connect_with_retry()
+            if not self.session:
+                raise Exception("No Cassandra session available")
+
         try:
             statement = SimpleStatement(query)
             result = self.session.execute(statement, params or {})
@@ -91,20 +112,23 @@ class CassandraClient:
             Async result object
         """
         if not self.session:
-            self.connect()
-        
+            self.connect_with_retry()
+            if not self.session:
+                raise Exception("No Cassandra session available")
+
         try:
             statement = SimpleStatement(query)
             return self.session.execute_async(statement, params or {})
         except Exception as e:
             logger.error(f"Async query execution failed: {str(e)}")
             raise
-    
+
     def get_session(self) -> Session:
         """Get the Cassandra session."""
         if not self.session:
-            self.connect()
+            self.connect_with_retry()
+            if not self.session:
+                raise Exception("No Cassandra session available")
         return self.session
 
-# Create a global instance
-cassandra_client = CassandraClient() 
+cassandra_client = CassandraClient()
