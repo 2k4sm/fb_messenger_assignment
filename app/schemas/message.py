@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
+from uuid import UUID
 
 class MessageBase(BaseModel):
     content: str = Field(..., description="Content of the message")
@@ -10,7 +11,7 @@ class MessageCreate(MessageBase):
     receiver_id: int = Field(..., description="ID of the receiver")
 
 class MessageResponse(MessageBase):
-    id: int = Field(..., description="Unique ID of the message")
+    id: UUID = Field(..., description="Unique ID of the message")
     sender_id: int = Field(..., description="ID of the sender")
     receiver_id: int = Field(..., description="ID of the receiver")
     created_at: datetime = Field(..., description="Timestamp when message was created")
@@ -25,4 +26,4 @@ class PaginatedMessageResponse(BaseModel):
     total: int = Field(..., description="Total number of messages")
     page: int = Field(..., description="Current page number")
     limit: int = Field(..., description="Number of items per page")
-    data: List[MessageResponse] = Field(..., description="List of messages") 
+    data: List[MessageResponse] = Field(..., description="List of messages")
