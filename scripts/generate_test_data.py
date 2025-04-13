@@ -1,6 +1,5 @@
 """
 Script to generate test data for the Messenger application.
-This script is a skeleton for students to implement.
 """
 import os
 import uuid
@@ -34,25 +33,199 @@ def connect_to_cassandra():
         logger.error(f"Failed to connect to Cassandra: {str(e)}")
         raise
 
+def tables_exist(session):
+    """Check if required tables exist in the keyspace."""
+    logger.info("Checking if required tables exist...")
+
+    required_tables = ['users', 'messages', 'messages_by_user', 'conversations', 'conversations_by_user']
+
+    keyspace_metadata = session.cluster.metadata.keyspaces[CASSANDRA_KEYSPACE]
+    existing_tables = keyspace_metadata.tables.keys()
+
+    missing_tables = [table for table in required_tables if table not in existing_tables]
+
+    if missing_tables:
+        logger.info(f"Missing tables: {', '.join(missing_tables)}")
+        return False
+
+    logger.info("All required tables exist.")
+    return True
+
+def create_tables(session):
+    """Create the necessary tables for the application."""
+    logger.info("Creating tables...")
+
+    session.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id int,
+            username text,
+            created_at timestamp,
+            PRIMARY KEY (user_id)
+        )
+    """)
+
+    session.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            conversation_id int,
+            timestamp timestamp,
+            message_id uuid,
+            sender_id int,
+            receiver_id int,
+            content text,
+            PRIMARY KEY (conversation_id, timestamp, message_id)
+        ) WITH CLUSTERING ORDER BY (timestamp DESC, message_id ASC)
+    """)
+
+    session.execute("""
+        CREATE TABLE IF NOT EXISTS messages_by_user (
+            user_id int,
+            conversation_id int,
+            timestamp timestamp,
+            message_id uuid,
+            sender_id int,
+            receiver_id int,
+            content text,
+            PRIMARY KEY ((user_id), conversation_id, timestamp, message_id)
+        ) WITH CLUSTERING ORDER BY (conversation_id ASC, timestamp DESC, message_id ASC)
+    """)
+
+    session.execute("""
+        CREATE TABLE IF NOT EXISTS conversations_by_user (
+            user_id int,
+            conversation_id int,
+            other_user_id int,
+            last_message_at timestamp,
+            last_message_content text,
+            PRIMARY KEY (user_id, last_message_at, conversation_id)
+        ) WITH CLUSTERING ORDER BY (last_message_at DESC, conversation_id ASC)
+    """)
+
+    session.execute("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            conversation_id int,
+            user1_id int,
+            user2_id int,
+            created_at timestamp,
+            last_message_at timestamp,
+            last_message_content text,
+            PRIMARY KEY (conversation_id)
+        )
+    """)
+
+    logger.info("Tables created successfully.")
+
 def generate_test_data(session):
     """
     Generate test data in Cassandra.
-    
-    Students should implement this function to generate test data based on their schema design.
-    The function should create:
-    - Users (with IDs 1-NUM_USERS)
-    - Conversations between random pairs of users
-    - Messages in each conversation with realistic timestamps
     """
     logger.info("Generating test data...")
-    
-    # TODO: Students should implement the test data generation logic
-    # Hint:
-    # 1. Create a set of user IDs
-    # 2. Create conversations between random pairs of users
-    # 3. For each conversation, generate a random number of messages
-    # 4. Update relevant tables to maintain data consistency
-    
+
+    logger.info("Creating users...")
+    for user_id in range(1, NUM_USERS + 1):
+        username = f"user{user_id}"
+        created_at = datetime.utcnow() - timedelta(days=random.randint(1, 30))
+
+        session.execute(
+            """
+            INSERT INTO users (user_id, username, created_at)
+            VALUES (%s, %s, %s)
+            """,
+            (user_id, username, created_at)
+        )
+
+    logger.info("Creating conversations...")
+    conversations = []
+
+    for conv_id in range(1, NUM_CONVERSATIONS + 1):
+        user_ids = random.sample(range(1, NUM_USERS + 1), 2)
+        user1_id, user2_id = user_ids
+
+        created_at = datetime.utcnow() - timedelta(days=random.randint(1, 20))
+        last_message_at = created_at
+        last_message_content = None
+
+        session.execute(
+            """
+            INSERT INTO conversations
+            (conversation_id, user1_id, user2_id, created_at, last_message_at, last_message_content)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (conv_id, user1_id, user2_id, created_at, last_message_at, last_message_content)
+        )
+
+        conversations.append((conv_id, user1_id, user2_id, created_at))
+
+    logger.info("Creating messages...")
+
+    message_contents = [
+        "Hey, how are you?",
+        "What's up?",
+        "Can we meet tomorrow?",
+        "I'm busy right now",
+        "Let's catch up soon",
+        "Did you see that movie?",
+        "Have you done the assignment?",
+        "I'll call you later",
+        "Thanks for your help!",
+        "Congratulations!"
+    ]
+
+    for conv_id, user1_id, user2_id, created_at in conversations:
+        num_messages = random.randint(5, MAX_MESSAGES_PER_CONVERSATION)
+
+        current_time = created_at
+        latest_content = None
+
+        for i in range(num_messages):
+            current_time += timedelta(minutes=random.randint(1, 60))
+
+            sender_id = user1_id if i % 2 == 0 else user2_id
+            receiver_id = user2_id if i % 2 == 0 else user1_id
+
+            content = random.choice(message_contents)
+            latest_content = content
+
+            message_id = uuid.uuid4()
+
+            session.execute(
+                """
+                INSERT INTO messages
+                (conversation_id, timestamp, message_id, sender_id, receiver_id, content)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (conv_id, current_time, message_id, sender_id, receiver_id, content)
+            )
+
+            for user_id in [sender_id, receiver_id]:
+                session.execute(
+                    """
+                    INSERT INTO messages_by_user
+                    (user_id, conversation_id, timestamp, message_id, sender_id, receiver_id, content)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (user_id, conv_id, current_time, message_id, sender_id, receiver_id, content)
+                )
+
+        session.execute(
+            """
+            UPDATE conversations
+            SET last_message_at = %s, last_message_content = %s
+            WHERE conversation_id = %s
+            """,
+            (current_time, latest_content, conv_id)
+        )
+
+        for user_id in [user1_id, user2_id]:
+            other_user_id = user2_id if user_id == user1_id else user1_id
+            session.execute(
+                """
+                INSERT INTO conversations_by_user
+                (user_id, conversation_id, other_user_id, last_message_at, last_message_content)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (user_id, conv_id, other_user_id, current_time, latest_content)
+            )
+
     logger.info(f"Generated {NUM_CONVERSATIONS} conversations with messages")
     logger.info(f"User IDs range from 1 to {NUM_USERS}")
     logger.info("Use these IDs for testing the API endpoints")
@@ -60,21 +233,21 @@ def generate_test_data(session):
 def main():
     """Main function to generate test data."""
     cluster = None
-    
+
     try:
-        # Connect to Cassandra
         cluster, session = connect_to_cassandra()
-        
-        # Generate test data
+
+        if not tables_exist(session):
+            create_tables(session)
+
         generate_test_data(session)
-        
         logger.info("Test data generation completed successfully!")
     except Exception as e:
-        logger.error(f"Error generating test data: {str(e)}")
+            logger.error(f"Error generating test data: {str(e)}")
     finally:
         if cluster:
             cluster.shutdown()
             logger.info("Cassandra connection closed")
 
 if __name__ == "__main__":
-    main() 
+    main()
