@@ -1,4 +1,5 @@
 from fastapi import HTTPException, status
+from uuid import UUID
 
 from app.schemas.conversation import ConversationResponse, PaginatedConversationResponse
 from app.models.cassandra_models import ConversationModel
@@ -10,7 +11,7 @@ class ConversationController:
 
     async def get_user_conversations(
         self,
-        user_id: int,
+        user_id: UUID,
         page: int = 1,
         limit: int = 20
     ) -> PaginatedConversationResponse:

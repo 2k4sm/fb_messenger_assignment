@@ -4,6 +4,7 @@ from fastapi import HTTPException, status
 
 from app.schemas.message import MessageCreate, MessageResponse, PaginatedMessageResponse
 from app.models.cassandra_models import MessageModel
+from app.models.cassandra_models import ConversationModel
 
 class MessageController:
     """
@@ -24,9 +25,15 @@ class MessageController:
             HTTPException: If message sending fails
         """
         try:
+            conversation_id = message_data.conversation_id
+            if not conversation_id:
+                conversation = await ConversationModel.create_or_get_conversation(
+                    message_data.sender_id, message_data.receiver_id)
+                conversation_id = conversation['id']
+
             # Send the message
             message = await MessageModel.create_message(
-                conversation_id=message_data.conversation_id,
+                conversation_id=conversation_id,
                 sender_id=message_data.sender_id,
                 receiver_id=message_data.receiver_id,
                 content=message_data.content
@@ -39,14 +46,13 @@ class MessageController:
                 receiver_id=message['receiver_id'],
                 content=message['content'],
                 created_at=message['created_at'],
-                read_at=message['read_at']
+                read_at=message.get('read_at')
             )
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to send message: {str(e)}"
             )
-
     async def get_conversation_messages(
         self,
         conversation_id: int,

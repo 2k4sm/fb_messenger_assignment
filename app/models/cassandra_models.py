@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime
 from typing import Dict, Any, Optional
 
+from uuid import UUID
+
 from app.db.cassandra_client import cassandra_client
 
 class MessageModel:
@@ -14,8 +16,8 @@ class MessageModel:
 
     @staticmethod
     async def create_message(
-        sender_id: int,
-        receiver_id: int,
+        sender_id: UUID,
+        receiver_id: UUID,
         content: str,
         conversation_id: int
     ) -> Dict[str, Any]:
@@ -34,38 +36,27 @@ class MessageModel:
         timestamp = datetime.utcnow()
         message_id = uuid.uuid4()
 
+        sender_id_str = str(sender_id)
+        receiver_id_str = str(receiver_id)
+        message_id_str = str(message_id)
+
         cassandra_client.execute(
             """
             INSERT INTO messages (
                 conversation_id, timestamp, message_id, sender_id, receiver_id, content
             ) VALUES (%s, %s, %s, %s, %s, %s)
             """,
-            {
-                'conversation_id': conversation_id,
-                'timestamp': timestamp,
-                'message_id': message_id,
-                'sender_id': sender_id,
-                'receiver_id': receiver_id,
-                'content': content
-            }
+            [conversation_id, timestamp, message_id_str, sender_id_str, receiver_id_str, content]
         )
 
-        for user_id in [sender_id, receiver_id]:
+        for user_id in [sender_id_str, receiver_id_str]:
             cassandra_client.execute(
                 """
                 INSERT INTO messages_by_user (
                     user_id, conversation_id, timestamp, message_id, sender_id, receiver_id, content
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
-                {
-                    'user_id': user_id,
-                    'conversation_id': conversation_id,
-                    'timestamp': timestamp,
-                    'message_id': message_id,
-                    'sender_id': sender_id,
-                    'receiver_id': receiver_id,
-                    'content': content
-                }
+                [user_id, conversation_id, timestamp, message_id_str, sender_id_str, receiver_id_str, content]
             )
 
         cassandra_client.execute(
@@ -75,28 +66,18 @@ class MessageModel:
                 last_message_content = %s
             WHERE conversation_id = %s
             """,
-            {
-                'last_message_at': timestamp,
-                'last_message_content': content,
-                'conversation_id': conversation_id
-            }
+            [timestamp, content, conversation_id]
         )
 
-        for user_id in [sender_id, receiver_id]:
-            other_user_id = receiver_id if user_id == sender_id else sender_id
+        for user_id in [sender_id_str, receiver_id_str]:
+            other_user_id = receiver_id_str if user_id == sender_id_str else sender_id_str
             cassandra_client.execute(
                 """
                 INSERT INTO conversations_by_user (
                     user_id, conversation_id, other_user_id, last_message_at, last_message_content
                 ) VALUES (%s, %s, %s, %s, %s)
                 """,
-                {
-                    'user_id': user_id,
-                    'conversation_id': conversation_id,
-                    'other_user_id': other_user_id,
-                    'last_message_at': timestamp,
-                    'last_message_content': content
-                }
+                [user_id, conversation_id, other_user_id, timestamp, content]
             )
 
         return {
@@ -105,7 +86,8 @@ class MessageModel:
             'sender_id': sender_id,
             'receiver_id': receiver_id,
             'content': content,
-            'created_at': timestamp
+            'created_at': timestamp,
+            'read_at': None
         }
 
     @staticmethod
@@ -131,7 +113,7 @@ class MessageModel:
         SELECT COUNT(*) as count FROM messages
         WHERE conversation_id = %s
         """
-        count_result = cassandra_client.execute(count_query, {'conversation_id': conversation_id})
+        count_result = cassandra_client.execute(count_query, [conversation_id])
         total = count_result[0]['count'] if count_result else 0
 
         query = """
@@ -143,16 +125,10 @@ class MessageModel:
 
         if page > 1:
             messages = []
-            result = cassandra_client.execute(query, {
-                'conversation_id': conversation_id,
-                'limit': limit * page
-            })
+            result = cassandra_client.execute(query, [conversation_id, limit * page])
             messages = list(result)[offset:offset+limit]
         else:
-            result = cassandra_client.execute(query, {
-                'conversation_id': conversation_id,
-                'limit': limit
-            })
+            result = cassandra_client.execute(query, [conversation_id, limit])
             messages = list(result)
 
         formatted_messages = [{
@@ -197,11 +173,7 @@ class MessageModel:
         WHERE conversation_id = %s AND timestamp < %s
         ALLOW FILTERING
         """
-        count_params = {
-            'conversation_id': conversation_id,
-            'timestamp': before_timestamp
-        }
-        count_result = cassandra_client.execute(count_query, count_params)
+        count_result = cassandra_client.execute(count_query, [conversation_id, before_timestamp])
         total = count_result[0]['count'] if count_result else 0
 
         query = """
@@ -214,18 +186,10 @@ class MessageModel:
 
         if page > 1:
             messages = []
-            result = cassandra_client.execute(query, {
-                'conversation_id': conversation_id,
-                'timestamp': before_timestamp,
-                'limit': limit * page
-            })
+            result = cassandra_client.execute(query, [conversation_id, before_timestamp, limit * page])
             messages = list(result)[offset:offset+limit]
         else:
-            result = cassandra_client.execute(query, {
-                'conversation_id': conversation_id,
-                'timestamp': before_timestamp,
-                'limit': limit
-            })
+            result = cassandra_client.execute(query, [conversation_id, before_timestamp, limit])
             messages = list(result)
 
         formatted_messages = [{
@@ -244,7 +208,6 @@ class MessageModel:
             'data': formatted_messages
         }
 
-
 class ConversationModel:
     """
     Conversation model for interacting with the conversations-related tables.
@@ -252,7 +215,7 @@ class ConversationModel:
 
     @staticmethod
     async def get_user_conversations(
-        user_id: int,
+        user_id: UUID,
         page: int = 1,
         limit: int = 20
     ) -> Dict[str, Any]:
@@ -273,7 +236,7 @@ class ConversationModel:
         SELECT COUNT(*) as count FROM conversations_by_user
         WHERE user_id = %s
         """
-        count_result = cassandra_client.execute(count_query, {'user_id': user_id})
+        count_result = cassandra_client.execute(count_query, [user_id])
         total = count_result[0]['count'] if count_result else 0
 
         query = """
@@ -284,23 +247,17 @@ class ConversationModel:
         """
 
         if page > 1:
-            result = cassandra_client.execute(query, {
-                'user_id': user_id,
-                'limit': limit * page
-            })
+            result = cassandra_client.execute(query, [user_id, limit * page])
             conversations = list(result)[offset:offset+limit]
         else:
-            result = cassandra_client.execute(query, {
-                'user_id': user_id,
-                'limit': limit
-            })
+            result = cassandra_client.execute(query, [user_id, limit])
             conversations = list(result)
 
         formatted_conversations = []
         for conv in conversations:
             conv_detail = cassandra_client.execute(
                 "SELECT * FROM conversations WHERE conversation_id = %s",
-                {'conversation_id': conv['conversation_id']}
+                [conv['conversation_id']]
             )
             if conv_detail:
                 detail = conv_detail[0]
@@ -331,7 +288,7 @@ class ConversationModel:
             Conversation details or None if not found
         """
         query = "SELECT * FROM conversations WHERE conversation_id = %s"
-        result = cassandra_client.execute(query, {'conversation_id': conversation_id})
+        result = cassandra_client.execute(query, [conversation_id])
 
         if not result:
             return None
@@ -346,7 +303,7 @@ class ConversationModel:
         }
 
     @staticmethod
-    async def create_or_get_conversation(user1_id: int, user2_id: int) -> Dict[str, Any]:
+    async def create_or_get_conversation(user1_id: UUID, user2_id: UUID) -> Dict[str, Any]:
         """
         Get an existing conversation between two users or create a new one.
 
@@ -357,18 +314,15 @@ class ConversationModel:
         Returns:
             Conversation details
         """
+        user1_id_str = str(user1_id)
+        user2_id_str = str(user2_id)
+
         query = """
         SELECT * FROM conversations
         WHERE (user1_id = %s AND user2_id = %s) OR (user1_id = %s AND user2_id = %s)
         ALLOW FILTERING
         """
-        params = {
-            'p1': user1_id,
-            'p2': user2_id,
-            'p3': user2_id,
-            'p4': user1_id
-        }
-        result = cassandra_client.execute(query, params)
+        result = cassandra_client.execute(query, [user1_id_str, user2_id_str, user2_id_str, user1_id_str])
 
         if result:
             # Conversation exists
@@ -383,7 +337,7 @@ class ConversationModel:
             }
 
         count_query = "SELECT COUNT(*) as count FROM conversations"
-        count_result = cassandra_client.execute(count_query)
+        count_result = cassandra_client.execute(count_query, [])
         new_id = count_result[0]['count'] + 1 if count_result else 1
 
         now = datetime.utcnow()
@@ -394,13 +348,7 @@ class ConversationModel:
                 conversation_id, user1_id, user2_id, created_at, last_message_at
             ) VALUES (%s, %s, %s, %s, %s)
             """,
-            {
-                'conversation_id': new_id,
-                'user1_id': user1_id,
-                'user2_id': user2_id,
-                'created_at': now,
-                'last_message_at': now
-            }
+            [new_id, user1_id_str, user2_id_str, now, now]
         )
 
         return {

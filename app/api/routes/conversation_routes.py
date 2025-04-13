@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Query, Path
+from uuid import UUID
 
 from app.controllers.conversation_controller import ConversationController
 from app.schemas.conversation import (
@@ -10,7 +11,7 @@ router = APIRouter(prefix="/api/conversations", tags=["Conversations"])
 
 @router.get("/user/{user_id}", response_model=PaginatedConversationResponse)
 async def get_user_conversations(
-    user_id: int = Path(..., description="ID of the user"),
+    user_id: UUID = Path(..., description="ID of the user"),
     page: int = Query(1, description="Page number"),
     limit: int = Query(20, description="Number of conversations per page"),
     conversation_controller: ConversationController = Depends()
@@ -32,4 +33,4 @@ async def get_conversation(
     """
     Get a specific conversation by ID
     """
-    return await conversation_controller.get_conversation(conversation_id=conversation_id) 
+    return await conversation_controller.get_conversation(conversation_id=conversation_id)
