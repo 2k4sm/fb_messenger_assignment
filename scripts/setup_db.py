@@ -63,56 +63,59 @@ def create_tables(session):
 
     session.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id UUID PRIMARY KEY,
-            username TEXT,
-            email TEXT,
-            password_hash TEXT,
-            created_at TIMESTAMP,
-            last_login TIMESTAMP
+            user_id uuid,
+            username text,
+            created_at timestamp,
+            PRIMARY KEY (user_id)
         )
     """)
-
-    session.execute("CREATE INDEX IF NOT EXISTS ON users (username)")
 
     session.execute("""
         CREATE TABLE IF NOT EXISTS messages (
-            chat_id UUID,
-            message_id TIMEUUID,
-            sender_id UUID,
-            content TEXT,
-            sent_at TIMESTAMP,
-            is_read BOOLEAN,
-            PRIMARY KEY ((chat_id), message_id)
-        ) WITH CLUSTERING ORDER BY (message_id DESC)
+            conversation_id int,
+            timestamp timestamp,
+            message_id uuid,
+            sender_id uuid,
+            receiver_id uuid,
+            content text,
+            PRIMARY KEY (conversation_id, timestamp, message_id)
+        ) WITH CLUSTERING ORDER BY (timestamp DESC, message_id ASC)
     """)
 
     session.execute("""
-        CREATE TABLE IF NOT EXISTS user_chats (
-            user_id UUID,
-            chat_id UUID,
-            chat_name TEXT,
-            last_updated TIMESTAMP,
-            PRIMARY KEY (user_id, chat_id)
-        ) WITH CLUSTERING ORDER BY (chat_id ASC)
+        CREATE TABLE IF NOT EXISTS messages_by_user (
+            user_id uuid,
+            conversation_id int,
+            timestamp timestamp,
+            message_id uuid,
+            sender_id uuid,
+            receiver_id uuid,
+            content text,
+            PRIMARY KEY ((user_id), conversation_id, timestamp, message_id)
+        ) WITH CLUSTERING ORDER BY (conversation_id ASC, timestamp DESC, message_id ASC)
     """)
 
     session.execute("""
-        CREATE TABLE IF NOT EXISTS chat_participants (
-            chat_id UUID,
-            user_id UUID,
-            joined_at TIMESTAMP,
-            PRIMARY KEY (chat_id, user_id)
+        CREATE TABLE IF NOT EXISTS conversations (
+            conversation_id int,
+            user1_id uuid,
+            user2_id uuid,
+            created_at timestamp,
+            last_message_at timestamp,
+            last_message_content text,
+            PRIMARY KEY (conversation_id)
         )
     """)
 
     session.execute("""
-        CREATE TABLE IF NOT EXISTS user_connections (
-            user_id UUID,
-            connection_id UUID,
-            connection_type TEXT,
-            established_at TIMESTAMP,
-            PRIMARY KEY (user_id, connection_id)
-        )
+        CREATE TABLE IF NOT EXISTS conversations_by_user (
+            user_id uuid,
+            conversation_id int,
+            other_user_id uuid,
+            last_message_at timestamp,
+            last_message_content text,
+            PRIMARY KEY (user_id, last_message_at, conversation_id)
+        ) WITH CLUSTERING ORDER BY (last_message_at DESC, conversation_id ASC)
     """)
 
     logger.info("Tables created successfully.")

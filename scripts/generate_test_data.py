@@ -57,7 +57,7 @@ def create_tables(session):
 
     session.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id int,
+            user_id uuid,
             username text,
             created_at timestamp,
             PRIMARY KEY (user_id)
@@ -69,8 +69,8 @@ def create_tables(session):
             conversation_id int,
             timestamp timestamp,
             message_id uuid,
-            sender_id int,
-            receiver_id int,
+            sender_id uuid,
+            receiver_id uuid,
             content text,
             PRIMARY KEY (conversation_id, timestamp, message_id)
         ) WITH CLUSTERING ORDER BY (timestamp DESC, message_id ASC)
@@ -78,12 +78,12 @@ def create_tables(session):
 
     session.execute("""
         CREATE TABLE IF NOT EXISTS messages_by_user (
-            user_id int,
+            user_id uuid,
             conversation_id int,
             timestamp timestamp,
             message_id uuid,
-            sender_id int,
-            receiver_id int,
+            sender_id uuid,
+            receiver_id uuid,
             content text,
             PRIMARY KEY ((user_id), conversation_id, timestamp, message_id)
         ) WITH CLUSTERING ORDER BY (conversation_id ASC, timestamp DESC, message_id ASC)
@@ -91,9 +91,9 @@ def create_tables(session):
 
     session.execute("""
         CREATE TABLE IF NOT EXISTS conversations_by_user (
-            user_id int,
+            user_id uuid,
             conversation_id int,
-            other_user_id int,
+            other_user_id uuid,
             last_message_at timestamp,
             last_message_content text,
             PRIMARY KEY (user_id, last_message_at, conversation_id)
@@ -103,8 +103,8 @@ def create_tables(session):
     session.execute("""
         CREATE TABLE IF NOT EXISTS conversations (
             conversation_id int,
-            user1_id int,
-            user2_id int,
+            user1_id uuid,
+            user2_id uuid,
             created_at timestamp,
             last_message_at timestamp,
             last_message_content text,
@@ -121,8 +121,11 @@ def generate_test_data(session):
     logger.info("Generating test data...")
 
     logger.info("Creating users...")
-    for user_id in range(1, NUM_USERS + 1):
-        username = f"user{user_id}"
+    user_ids = []
+    for i in range(1, NUM_USERS + 1):
+        user_id = uuid.uuid4()
+        user_ids.append(user_id)
+        username = f"user{i}"
         created_at = datetime.utcnow() - timedelta(days=random.randint(1, 30))
 
         session.execute(
@@ -137,8 +140,8 @@ def generate_test_data(session):
     conversations = []
 
     for conv_id in range(1, NUM_CONVERSATIONS + 1):
-        user_ids = random.sample(range(1, NUM_USERS + 1), 2)
-        user1_id, user2_id = user_ids
+        user_pair = random.sample(user_ids, 2)
+        user1_id, user2_id = user_pair
 
         created_at = datetime.utcnow() - timedelta(days=random.randint(1, 20))
         last_message_at = created_at
@@ -227,7 +230,7 @@ def generate_test_data(session):
             )
 
     logger.info(f"Generated {NUM_CONVERSATIONS} conversations with messages")
-    logger.info(f"User IDs range from 1 to {NUM_USERS}")
+    logger.info("Created test users with UUIDs")
     logger.info("Use these IDs for testing the API endpoints")
 
 def main():
