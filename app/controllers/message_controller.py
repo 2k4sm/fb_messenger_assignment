@@ -25,7 +25,7 @@ class MessageController:
             HTTPException: If message sending fails
         """
         try:
-            conversation_id = message_data.conversation_id
+            conversation_id = getattr(message_data, "conversation_id", None)
             if not conversation_id:
                 conversation = await ConversationModel.create_or_get_conversation(
                     message_data.sender_id, message_data.receiver_id)

@@ -36,9 +36,9 @@ class MessageModel:
         timestamp = datetime.utcnow()
         message_id = uuid.uuid4()
 
-        sender_id_str = str(sender_id)
-        receiver_id_str = str(receiver_id)
-        message_id_str = str(message_id)
+        sender_id_str = sender_id
+        receiver_id_str = receiver_id
+        message_id_str = message_id
 
         cassandra_client.execute(
             """
@@ -98,38 +98,21 @@ class MessageModel:
     ) -> Dict[str, Any]:
         """
         Get messages for a conversation with pagination.
-
-        Args:
-            conversation_id: ID of the conversation
-            page: Page number
-            limit: Number of messages per page
-
-        Returns:
-            Dictionary with total count and messages list
         """
-        offset = (page - 1) * limit
-
-        count_query = """
-        SELECT COUNT(*) as count FROM messages
-        WHERE conversation_id = %s
-        """
-        count_result = cassandra_client.execute(count_query, [conversation_id])
-        total = count_result[0]['count'] if count_result else 0
-
         query = """
         SELECT conversation_id, timestamp, message_id, sender_id, receiver_id, content
         FROM messages
         WHERE conversation_id = %s
-        LIMIT %s
         """
+        result = cassandra_client.execute(query, [conversation_id])
+        all_messages = list(result)
+        total = len(all_messages)
 
-        if page > 1:
-            messages = []
-            result = cassandra_client.execute(query, [conversation_id, limit * page])
-            messages = list(result)[offset:offset+limit]
-        else:
-            result = cassandra_client.execute(query, [conversation_id, limit])
-            messages = list(result)
+        all_messages.sort(key=lambda msg: msg['timestamp'], reverse=True)
+
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_messages = all_messages[start_idx:end_idx]
 
         formatted_messages = [{
             'id': msg['message_id'],
@@ -138,7 +121,7 @@ class MessageModel:
             'receiver_id': msg['receiver_id'],
             'content': msg['content'],
             'created_at': msg['timestamp']
-        } for msg in messages]
+        } for msg in paginated_messages]
 
         return {
             'total': total,
@@ -156,41 +139,22 @@ class MessageModel:
     ) -> Dict[str, Any]:
         """
         Get messages before a timestamp with pagination.
-
-        Args:
-            conversation_id: ID of the conversation
-            before_timestamp: Get messages before this timestamp
-            page: Page number
-            limit: Number of messages per page
-
-        Returns:
-            Dictionary with total count and messages list
         """
-        offset = (page - 1) * limit
-
-        count_query = """
-        SELECT COUNT(*) as count FROM messages
-        WHERE conversation_id = %s AND timestamp < %s
-        ALLOW FILTERING
-        """
-        count_result = cassandra_client.execute(count_query, [conversation_id, before_timestamp])
-        total = count_result[0]['count'] if count_result else 0
-
         query = """
         SELECT conversation_id, timestamp, message_id, sender_id, receiver_id, content
         FROM messages
-        WHERE conversation_id = %s AND timestamp < %s
-        LIMIT %s
-        ALLOW FILTERING
+        WHERE conversation_id = %s
         """
+        result = cassandra_client.execute(query, [conversation_id])
 
-        if page > 1:
-            messages = []
-            result = cassandra_client.execute(query, [conversation_id, before_timestamp, limit * page])
-            messages = list(result)[offset:offset+limit]
-        else:
-            result = cassandra_client.execute(query, [conversation_id, before_timestamp, limit])
-            messages = list(result)
+        filtered_messages = [msg for msg in result if msg['timestamp'] < before_timestamp]
+        total = len(filtered_messages)
+
+        filtered_messages.sort(key=lambda msg: msg['timestamp'], reverse=True)
+
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_messages = filtered_messages[start_idx:end_idx]
 
         formatted_messages = [{
             'id': msg['message_id'],
@@ -199,7 +163,7 @@ class MessageModel:
             'receiver_id': msg['receiver_id'],
             'content': msg['content'],
             'created_at': msg['timestamp']
-        } for msg in messages]
+        } for msg in paginated_messages]
 
         return {
             'total': total,
@@ -221,40 +185,23 @@ class ConversationModel:
     ) -> Dict[str, Any]:
         """
         Get conversations for a user with pagination.
-
-        Args:
-            user_id: ID of the user
-            page: Page number
-            limit: Number of conversations per page
-
-        Returns:
-            Dictionary with total count and conversations list
         """
-        offset = (page - 1) * limit
-
-        count_query = """
-        SELECT COUNT(*) as count FROM conversations_by_user
-        WHERE user_id = %s
-        """
-        count_result = cassandra_client.execute(count_query, [user_id])
-        total = count_result[0]['count'] if count_result else 0
 
         query = """
         SELECT user_id, conversation_id, other_user_id, last_message_at, last_message_content
         FROM conversations_by_user
         WHERE user_id = %s
-        LIMIT %s
         """
+        result = cassandra_client.execute(query, [user_id])
+        all_conversations = list(result)
+        total = len(all_conversations)
 
-        if page > 1:
-            result = cassandra_client.execute(query, [user_id, limit * page])
-            conversations = list(result)[offset:offset+limit]
-        else:
-            result = cassandra_client.execute(query, [user_id, limit])
-            conversations = list(result)
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_conversations = all_conversations[start_idx:end_idx]
 
         formatted_conversations = []
-        for conv in conversations:
+        for conv in paginated_conversations:
             conv_detail = cassandra_client.execute(
                 "SELECT * FROM conversations WHERE conversation_id = %s",
                 [conv['conversation_id']]
@@ -306,23 +253,25 @@ class ConversationModel:
     async def create_or_get_conversation(user1_id: UUID, user2_id: UUID) -> Dict[str, Any]:
         """
         Get an existing conversation between two users or create a new one.
-
-        Args:
-            user1_id: ID of the first user
-            user2_id: ID of the second user
-
-        Returns:
-            Conversation details
         """
-        user1_id_str = str(user1_id)
-        user2_id_str = str(user2_id)
+        user1_id_str = user1_id
+        user2_id_str = user2_id
 
-        query = """
+        query1 = """
         SELECT * FROM conversations
-        WHERE (user1_id = %s AND user2_id = %s) OR (user1_id = %s AND user2_id = %s)
+        WHERE user1_id = %s AND user2_id = %s
         ALLOW FILTERING
         """
-        result = cassandra_client.execute(query, [user1_id_str, user2_id_str, user2_id_str, user1_id_str])
+        result = cassandra_client.execute(query1, [user1_id_str, user2_id_str])
+
+        if not result:
+            # Try the reverse combination
+            query2 = """
+            SELECT * FROM conversations
+            WHERE user1_id = %s AND user2_id = %s
+            ALLOW FILTERING
+            """
+            result = cassandra_client.execute(query2, [user2_id_str, user1_id_str])
 
         if result:
             # Conversation exists
@@ -336,9 +285,10 @@ class ConversationModel:
                 'last_message_content': conv['last_message_content']
             }
 
-        count_query = "SELECT COUNT(*) as count FROM conversations"
-        count_result = cassandra_client.execute(count_query, [])
-        new_id = count_result[0]['count'] + 1 if count_result else 1
+
+        id_query = "SELECT MAX(conversation_id) as max_id FROM conversations"
+        id_result = cassandra_client.execute(id_query)
+        new_id = (id_result[0]['max_id'] or 0) + 1
 
         now = datetime.utcnow()
 
